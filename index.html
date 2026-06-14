@@ -291,6 +291,7 @@
   }
   .mbtn:hover { border-color: var(--dim); }
   .mbtn.go { color: var(--live); border-color: rgba(107,255,140,.4); }
+  .mbtn.mode-btn.active { color: var(--live); border-color: rgba(107,255,140,.4); box-shadow: 0 0 8px rgba(107,255,140,.2); }
   .mbtn.rec { color: var(--sig); border-color: rgba(255,59,48,.4); }
   .grow { flex: 1; }
   .tempo {
@@ -338,6 +339,84 @@
     color: var(--ink); text-shadow: 0 0 10px rgba(255,255,255,.15);
   }
   .editor-tracks { display: flex; flex-direction: column; gap: 8px; }
+
+  /* FX-Zeile */
+  .efx-row {
+    display: flex; align-items: center; gap: 8px; flex-wrap: nowrap;
+    background: rgba(0,0,0,.3); border: 1px solid rgba(255,255,255,.06);
+    border-radius: 6px; padding: 8px 12px;
+    margin-top: -4px;    /* direkt an die Spur-Zeile andocken */
+  }
+  .efx-block {
+    background: linear-gradient(180deg, #1e2028, #14151a);
+    border: 1px solid var(--line); border-radius: 5px;
+    padding: 6px 10px; cursor: grab;
+    display: flex; flex-direction: column; align-items: center; gap: 4px;
+    min-width: 60px;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.08);
+    transition: border-color .1s;
+    user-select: none;
+  }
+  .efx-block.on {
+    border-color: var(--track-col, var(--amber));
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.08), 0 0 8px rgba(255,106,0,.25);
+  }
+  .efx-block.dragging { opacity: .4; }
+  .efx-block.drag-over { border-color: #fff; }
+  .efx-label {
+    font-size: 9px; letter-spacing: .15em; color: var(--dim); font-weight: 700;
+  }
+  .efx-onbtn {
+    font-size: 8px; letter-spacing: .1em; padding: 2px 6px; border-radius: 3px;
+    background: #0e0f12; border: 1px solid var(--line); color: var(--dim); cursor: pointer;
+  }
+  .efx-block.on .efx-onbtn {
+    background: var(--amber); border-color: #c05000; color: #0d0e12; font-weight: 700;
+  }
+  .efx-actions {
+    display: flex; flex-direction: column; gap: 4px; margin-left: auto; flex: none;
+  }
+  .efx-undo, .efx-apply {
+    font-size: 9px; padding: 4px 10px;
+  }
+  .efx-apply { color: var(--live); border-color: rgba(107,255,140,.4); }
+  .efx-toggle.on-fx { color: var(--amber); border-color: var(--amber); }
+
+  /* FX-Popup */
+  .efx-popup {
+    position: fixed; z-index: 9999;
+    background: #16181f; border: 1px solid var(--line);
+    border-radius: 8px; padding: 12px;
+    box-shadow: 0 8px 32px rgba(0,0,0,.7), inset 0 1px 0 rgba(255,255,255,.08);
+    min-width: 180px;
+  }
+  .efx-popup-head {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 10px; padding-bottom: 8px;
+    border-bottom: 1px solid var(--line);
+    font-size: 11px; letter-spacing: .18em; color: var(--amber); font-weight: 700;
+  }
+  .efx-popup-close {
+    background: none; border: none; color: var(--dim); cursor: pointer;
+    font-size: 13px; padding: 0 2px; line-height: 1;
+  }
+  .efx-popup-close:hover { color: #fff; }
+  .efx-popup-body {}
+
+  /* EQ-Kurven-Display im Popup (Knob-Drag-Stil, aus dem Drecksler portiert) */
+  .efx-eq-graph-wrap {
+    position: relative; width: 340px; height: 160px;
+    border: 1px solid var(--line); border-radius: 6px;
+    background: rgba(0,0,0,.5); overflow: hidden;
+  }
+  .efx-eq-graph-wrap canvas { width: 100%; height: 100%; display: block; cursor: ns-resize; }
+
+  /* Knob-Regler im Popup */
+  .efx-knob-row { display: flex; gap: 16px; flex-wrap: wrap; }
+  .efx-knob-grp { display: flex; flex-direction: column; gap: 4px; min-width: 100px; }
+  .efx-knob-grp label { font-size: 9px; letter-spacing: .15em; color: var(--dim); }
+  .efx-knob-grp input[type="range"] { accent-color: var(--amber); width: 100%; cursor: pointer; }
+  .efx-val { font-size: 9px; color: var(--ink); letter-spacing: .05em; }
   .etrack {
     display: flex; align-items: center; gap: 12px;
     background: #0c0d10; border: 1px solid #000; border-radius: 6px;
@@ -440,6 +519,7 @@
         <button class="mbtn" id="editorBtn" title="Multitrack-Editor">EDITOR</button>
         <button class="mbtn" id="monBtn" title="Live-Monitoring">MONITOR</button>
         <button class="mbtn" id="calBtn" title="Latenz messen">CAL</button>
+        <button class="mbtn mode-btn active" id="modeBtn" title="SESSION: sofort aufnehmen / PRECISE: Warmup und Count-in">SESSION</button>
         <div class="ingain">
           <span class="lbl">IN</span>
           <input type="range" id="inGain" min="0" max="300" value="100">
@@ -467,7 +547,7 @@
     </div>
 
     <div class="foot">
-      <span>DREX-LP 050 &middot; REV 0.41</span>
+      <span>DREX-LP 050 &middot; REV 0.51</span>
       <span>THE SIGNAL CONTINUES</span>
     </div>
   </div>
@@ -482,6 +562,7 @@
   let ac = null;                 // AudioContext (lazy)
   let micStream = null, micSource = null;
   let monGain = null, monitorOn = false;
+  let sessionMode = true;   // Default: SESSION
   let inputAnalyser = null;
   let inputGain = null, inputGainValue = 1.0;
   let firstCountInRunning = false;
@@ -506,7 +587,16 @@
       state: "empty",           // empty | warmup | armed | recording | loop
       recChunks: null, recProc: null, recStartTime: 0,
       el: null, ring: null, core: null, cap: null, led: null,
-      eRow: null, eCanvas: null, eCursor: null,   // Editor-Referenzen
+      eRow: null, eCanvas: null, eCursor: null,
+      fxChain: ["eq", "distortion", "chorus", "reverb", "gate"],
+      fxParams: {
+        eq:         { bands: [0,0,0,0,0,0,0,0] },
+        distortion: { drive: 0.3, on: false },
+        chorus:     { depth: 30, rate: 1.5, on: false },
+        reverb:     { size: 0.3, wet: 0.3, on: false },
+        gate:       { threshold: -40, on: false },
+      },
+      fxHistory: null,
     };
   }
 
@@ -714,7 +804,7 @@
     src.buffer = tr.buffer;
     src.loop = true;
     const g = ac.createGain();
-    g.gain.value = tr.muted ? 0 : tr.level;
+    g.gain.value = effectiveGain(tr);
     const p = ac.createStereoPanner ? ac.createStereoPanner() : null;
     if (p) { p.pan.value = tr.pan; src.connect(g); g.connect(p); p.connect(masterGain); }
     else { src.connect(g); g.connect(masterGain); }
@@ -809,21 +899,53 @@
     if (ac.state === "suspended") await ac.resume();
 
     if (tr.state === "empty") {
-      // ---- Phase 1: Aufwaermen (gelb) ----
       if (!(await ensureMic())) return;
       tempo = clampInt(document.getElementById("tempo").value, 40, 240, 120);
       bars  = clampInt(document.getElementById("bars").value, 1, 8, 4);
-      tr.state = "warmup";
-      setRingWarmup(tr);
-      setStatus("TRK " + (tr.idx+1) + " // WARMUP // PEGEL EINSTELLEN");
-      // Monitoring NICHT automatisch anfassen: bleibt so wie der User es mit MONITOR gesetzt hat
-      // Metronom muss laufen (als Uhr und hoerbar)
-      if (!transportRunning && !metroTimer) {
-        startMetronomeClock(ac.currentTime + 0.1, 0);
-        warmupClockStarted = true;
+
+      if (transportRunning || sessionMode) {
+        // SESSION oder Folge-Spur: sofort zum naechsten Taktanfang
+        let recStart;
+        if (transportRunning) {
+          recStart = nextCycleTime();
+          if (recStart - ac.currentTime < 0.08) recStart += loopLenSec;
+        } else {
+          // Session Mode, erste Spur: Metronom starten, einen Takt Count-in
+          const bd = beatDur();
+          startMetronomeClock(ac.currentTime + 0.1, 0);
+          firstCountInRunning = true;
+          recStart = ac.currentTime + 0.1 + barDur();
+        }
+        tr.plannedRecStart = recStart;
+        tr.state = "armed";
+        setRing(tr, "REC", "#ff3b30");
+        setStatus("TRK " + (tr.idx+1) + " // ARMED");
+        requestAnimationFrame(tick);
+        const waitMs = (recStart - ac.currentTime) * 1000;
+        setTimeout(() => {
+          if (tr.state !== "armed") return;
+          tr.state = "recording";
+          setRing(tr, "REC", "#ff3b30");
+          setStatus("TRK " + (tr.idx+1) + " // RECORDING");
+          tr.ringStart = performance.now();
+          tr.ringDur = loopDuration() * 1000;
+          startRecording(tr);
+          requestAnimationFrame(tick);
+          setTimeout(() => finishRecording(tr), loopDuration() * 1000 + 30);
+        }, Math.max(0, waitMs));
+
+      } else {
+        // PRECISE, erste Spur: voller Warmup-Ablauf
+        tr.state = "warmup";
+        setRingWarmup(tr);
+        setStatus("TRK " + (tr.idx+1) + " // WARMUP // ADJUST LEVELS");
+        if (!metroTimer) {
+          startMetronomeClock(ac.currentTime + 0.1, 0);
+          warmupClockStarted = true;
+        }
+        metroOn = true;
+        requestAnimationFrame(tick);
       }
-      metroOn = true;
-      requestAnimationFrame(tick);   // Peak-Meter in Warmup aktiv
 
     } else if (tr.state === "warmup") {
       // ---- Phase 2: Ausloesen, Metronom aussetzen, Count-in, Aufnahme ----
@@ -897,7 +1019,7 @@
     src.buffer = tr.buffer;
     src.loop = true;
     const g = ac.createGain();
-    g.gain.value = tr.muted ? 0 : tr.level;
+    g.gain.value = effectiveGain(tr);
     const p = ac.createStereoPanner ? ac.createStereoPanner() : null;
     if (p) { p.pan.value = tr.pan; src.connect(g); g.connect(p); p.connect(masterGain); }
     else { src.connect(g); g.connect(masterGain); }
@@ -1071,6 +1193,7 @@
     const host = document.getElementById("editorTracks");
     host.innerHTML = "";
     for (const tr of tracks) {
+      // Haupt-Zeile
       const row = document.createElement("div");
       row.className = "etrack";
       row.style.setProperty("--track-col", TRACK_COLS[tr.idx]);
@@ -1084,28 +1207,38 @@
         <div class="etrack-ctrls">
           <button class="ebtn" data-eact="mute">MUTE</button>
           <button class="ebtn" data-eact="solo">SOLO</button>
+          <button class="ebtn efx-toggle" data-eact="fx">FX</button>
           <div class="eknob"><input type="range" data-eact="level" min="0" max="100" value="${Math.round(tr.level*100)}"><span>LVL</span></div>
           <div class="eknob pan"><input type="range" data-eact="pan" min="-100" max="100" value="${Math.round(tr.pan*100)}"><span>PAN</span></div>
         </div>`;
       host.appendChild(row);
+
+      // FX-Zeile (zunächst versteckt)
+      const fxRow = document.createElement("div");
+      fxRow.className = "efx-row";
+      fxRow.style.display = "none";
+      fxRow.dataset.trk = tr.idx;
+      host.appendChild(fxRow);
+      tr.eFxRow = fxRow;
+
+      buildFxRow(tr);
+
       tr.eRow = row;
       tr.eCanvas = row.querySelector("canvas");
       tr.eCursor = row.querySelector(".etrack-cursor");
 
-      // Zustaende spiegeln
       const mb = row.querySelector('[data-eact="mute"]');
       const sb = row.querySelector('[data-eact="solo"]');
+      const fb = row.querySelector('[data-eact="fx"]');
       mb.classList.toggle("on-mute", tr.muted);
       sb.classList.toggle("on-solo", tr.solo);
 
-      mb.addEventListener("click", () => {
-        toggleMute(tr);
-        mb.classList.toggle("on-mute", tr.muted);
-      });
-      sb.addEventListener("click", () => {
-        tr.solo = !tr.solo;
-        sb.classList.toggle("on-solo", tr.solo);
-        applyAllGains();
+      mb.addEventListener("click", () => { toggleMute(tr); mb.classList.toggle("on-mute", tr.muted); });
+      sb.addEventListener("click", () => { tr.solo = !tr.solo; sb.classList.toggle("on-solo", tr.solo); applyAllGains(); });
+      fb.addEventListener("click", () => {
+        const open = fxRow.style.display !== "none";
+        fxRow.style.display = open ? "none" : "flex";
+        fb.classList.toggle("on-fx", !open);
       });
       row.querySelector('[data-eact="level"]').addEventListener("input", (e) => {
         setLevel(tr, parseInt(e.target.value, 10) / 100);
@@ -1117,6 +1250,373 @@
 
       if (tr.buffer) drawWave(tr);
     }
+  }
+
+  // FX-Labels fuer die Bloecke
+  const FX_LABELS = { eq: "EQ", distortion: "DIST", chorus: "CHORUS", reverb: "REVERB", gate: "GATE" };
+
+  // ---------- 8-Band Graphic EQ: Kurven-Display + Griffpunkte (portiert aus dem Drecksler) ----------
+  // ISO-Treppe 63-8k, Q1.41, Shelf-Enden. Kurve = echte Summenantwort via getFrequencyResponse.
+  // Werte liegen pro Spur in tr.fxParams.eq.bands. Render bleibt applyFxChain (offline).
+  const EQ8F = [63,125,250,500,1000,2000,4000,8000];
+  const EQ8LBL = ["63","125","250","500","1K","2K","4K","8K"];
+  const EQ8MIN = -12, EQ8MAX = 12;
+  const EQ_FMIN = 20, EQ_FMAX = 20000, EQ_DBVIEW = 14, EQ_PAD = 10, EQ_N = 180;
+  const eqFx2x = (f,w) => Math.log(f/EQ_FMIN)/Math.log(EQ_FMAX/EQ_FMIN)*w;
+  const eqDb2y = (db,hh) => hh*0.5 - db/EQ_DBVIEW*(hh*0.5-EQ_PAD);
+  const eqY2db = (y,hh) => (hh*0.5-y)/(hh*0.5-EQ_PAD)*EQ_DBVIEW;
+  // Unverbundene Mess-Filterbank in eigenem Offline-Context (unabhaengig vom Playback)
+  let eqMeasureCtx=null, eqMeasure=null, eqFreqsArr=null, eqMagArr=null, eqPhaseArr=null, eqSumArr=null;
+  function eqMeasureBank() {
+    if (eqMeasure) return eqMeasure;
+    eqMeasureCtx = new OfflineAudioContext(1, 1, 44100);
+    eqMeasure = EQ8F.map((f,i) => {
+      const b = eqMeasureCtx.createBiquadFilter();
+      b.type = (i===0) ? "lowshelf" : (i===EQ8F.length-1) ? "highshelf" : "peaking";
+      b.frequency.value = f; b.Q.value = 1.41;
+      return b;
+    });
+    eqFreqsArr = new Float32Array(EQ_N); eqMagArr = new Float32Array(EQ_N);
+    eqPhaseArr = new Float32Array(EQ_N); eqSumArr = new Float32Array(EQ_N);
+    for (let k=0;k<EQ_N;k++) eqFreqsArr[k] = EQ_FMIN*Math.pow(EQ_FMAX/EQ_FMIN, k/(EQ_N-1));
+    return eqMeasure;
+  }
+  function eqCurveDb(bands) {
+    const bank = eqMeasureBank();
+    eqSumArr.fill(0);
+    for (let i=0;i<bank.length;i++) {
+      bank[i].gain.value = bands[i];
+      bank[i].getFrequencyResponse(eqFreqsArr, eqMagArr, eqPhaseArr);
+      for (let k=0;k<EQ_N;k++) eqSumArr[k] += 20*Math.log10(Math.max(1e-6, eqMagArr[k]));
+    }
+    return eqSumArr;
+  }
+  function eqBandAt(e, canvas, bands) {
+    const r = canvas.getBoundingClientRect(), x = e.clientX-r.left, y = e.clientY-r.top;
+    let best=-1, bd=18;
+    for (let i=0;i<EQ8F.length;i++) {
+      const d = Math.hypot(x-eqFx2x(EQ8F[i],r.width), y-eqDb2y(bands[i],r.height));
+      if (d<bd) { bd=d; best=i; }
+    }
+    if (best<0) {                                            // kein Punkt-Treffer: naechstes Band horizontal
+      let hd=28;
+      for (let i=0;i<EQ8F.length;i++) {
+        const d = Math.abs(x-eqFx2x(EQ8F[i],r.width));
+        if (d<hd) { hd=d; best=i; }
+      }
+    }
+    return best;
+  }
+  function drawEqGraph(canvas, g, bands, dragIdx) {
+    const r = canvas.getBoundingClientRect(), w = r.width, hh = r.height;
+    if (!w || !hh) return;                                   // Popup nicht sichtbar
+    const dpr = window.devicePixelRatio || 1;
+    if (canvas.width !== Math.round(w*dpr)) { canvas.width = Math.round(w*dpr); canvas.height = Math.round(hh*dpr); }
+    g.setTransform(dpr,0,0,dpr,0,0);
+    g.clearRect(0,0,w,hh);
+    g.strokeStyle = "rgba(189,250,255,.10)"; g.lineWidth = 1; g.beginPath();
+    for (const db of [-12,-6,6,12]) { const y = eqDb2y(db,hh); g.moveTo(0,y); g.lineTo(w,y); }
+    for (const f of [50,100,200,500,1000,2000,5000,10000]) { const x = eqFx2x(f,w); g.moveTo(x,0); g.lineTo(x,hh); }
+    g.stroke();
+    const y0 = eqDb2y(0,hh);
+    g.strokeStyle = "rgba(189,250,255,.3)"; g.beginPath(); g.moveTo(0,y0); g.lineTo(w,y0); g.stroke();
+    g.fillStyle = "rgba(189,250,255,.75)"; g.font = "10px 'Space Mono',monospace";
+    g.fillText("+12",4,eqDb2y(12,hh)+4); g.fillText("-12",4,eqDb2y(-12,hh)+4); g.fillText("0 DB",4,y0-4);
+    for (let i=0;i<EQ8F.length;i++) g.fillText(EQ8LBL[i], eqFx2x(EQ8F[i],w)-g.measureText(EQ8LBL[i]).width/2, hh-4);
+    // ECHTE Summenkurve: Neonlinie + Hauchfuellung zur 0-dB-Achse
+    const curve = eqCurveDb(bands), yZero = eqDb2y(0,hh);
+    g.save();
+    g.beginPath();
+    for (let k=0;k<EQ_N;k++) { const x = eqFx2x(eqFreqsArr[k],w), y = eqDb2y(curve[k],hh); if (k===0) g.moveTo(x,y); else g.lineTo(x,y); }
+    g.lineTo(eqFx2x(eqFreqsArr[EQ_N-1],w), yZero); g.lineTo(eqFx2x(eqFreqsArr[0],w), yZero); g.closePath();
+    g.fillStyle = "rgba(189,250,255,.10)"; g.fill();
+    g.restore();
+    g.strokeStyle = "#bdfaff"; g.lineWidth = 1.5;
+    g.shadowColor = "rgba(189,250,255,.6)"; g.shadowBlur = 7;
+    g.beginPath();
+    for (let k=0;k<EQ_N;k++) { const x = eqFx2x(eqFreqsArr[k],w), y = eqDb2y(curve[k],hh); if (k===0) g.moveTo(x,y); else g.lineTo(x,y); }
+    g.stroke(); g.shadowBlur = 0;
+    for (let i=0;i<EQ8F.length;i++) {                        // Griffe: hohle Ringe, fuellen sich beim Anfassen
+      const x = eqFx2x(EQ8F[i],w), y = eqDb2y(bands[i],hh), act = (i===dragIdx);
+      g.beginPath(); g.arc(x,y, act?5.5:4, 0, Math.PI*2);
+      g.fillStyle = act ? "#bdfaff" : "rgba(10,8,6,.92)"; g.fill();
+      g.lineWidth = 1.4; g.strokeStyle = act ? "#ffffff" : "#bdfaff";
+      if (act) { g.shadowColor = "rgba(189,250,255,.7)"; g.shadowBlur = 8; }
+      g.stroke(); g.shadowBlur = 0;
+    }
+    if (dragIdx>=0) {                                        // Wert direkt am Griff ablesbar
+      const x = eqFx2x(EQ8F[dragIdx],w), y = eqDb2y(bands[dragIdx],hh);
+      const txt = (bands[dragIdx]>0?"+":"")+(+bands[dragIdx]).toFixed(1)+" DB";
+      g.font = "11px 'Space Mono',monospace"; g.fillStyle = "#ffffff";
+      const tw = g.measureText(txt).width, tx = Math.max(4, Math.min(w-tw-4, x+10)), ty = Math.max(13, y-10);
+      g.fillText(txt, tx, ty);
+    }
+  }
+
+  function buildFxRow(tr) {
+    const fxRow = tr.eFxRow;
+    fxRow.innerHTML = "";
+
+    // Drag-sortierbare FX-Bloecke
+    for (const fx of tr.fxChain) {
+      const block = document.createElement("div");
+      block.className = "efx-block" + (tr.fxParams[fx].on ? " on" : "");
+      block.draggable = true;
+      block.dataset.fx = fx;
+      block.innerHTML = `
+        <div class="efx-label">${FX_LABELS[fx]}</div>
+        <button class="efx-onbtn">${tr.fxParams[fx].on ? "ON" : "OFF"}</button>`;
+      fxRow.appendChild(block);
+
+      // ON/OFF Toggle
+      block.querySelector(".efx-onbtn").addEventListener("click", (e) => {
+        e.stopPropagation();
+        tr.fxParams[fx].on = !tr.fxParams[fx].on;
+        block.classList.toggle("on", tr.fxParams[fx].on);
+        block.querySelector(".efx-onbtn").textContent = tr.fxParams[fx].on ? "ON" : "OFF";
+      });
+
+      // Klick auf Block (nicht auf ON/OFF) oeffnet Popup
+      block.addEventListener("click", (e) => {
+        if (e.target.closest(".efx-onbtn")) return;
+        openFxPopup(tr, fx, block);
+      });
+
+      // Drag-and-Drop
+      block.addEventListener("dragstart", (e) => {
+        e.dataTransfer.setData("fx", fx);
+        e.dataTransfer.setData("trk", tr.idx);
+        block.classList.add("dragging");
+      });
+      block.addEventListener("dragend", () => block.classList.remove("dragging"));
+      block.addEventListener("dragover", (e) => { e.preventDefault(); block.classList.add("drag-over"); });
+      block.addEventListener("dragleave", () => block.classList.remove("drag-over"));
+      block.addEventListener("drop", (e) => {
+        e.preventDefault();
+        block.classList.remove("drag-over");
+        const draggedFx = e.dataTransfer.getData("fx");
+        const draggedTrk = parseInt(e.dataTransfer.getData("trk"), 10);
+        if (draggedTrk !== tr.idx || draggedFx === fx) return;
+        // Reihenfolge in fxChain tauschen
+        const chain = tr.fxChain;
+        const fromIdx = chain.indexOf(draggedFx);
+        const toIdx = chain.indexOf(fx);
+        chain.splice(fromIdx, 1);
+        chain.splice(toIdx, 0, draggedFx);
+        buildFxRow(tr);  // neu aufbauen mit neuer Reihenfolge
+      });
+    }
+
+    // APPLY und UNDO rechts
+    const actions = document.createElement("div");
+    actions.className = "efx-actions";
+    actions.innerHTML = `
+      <button class="ebtn efx-undo" ${tr.fxHistory ? "" : "disabled"}>UNDO</button>
+      <button class="ebtn efx-apply" ${tr.buffer ? "" : "disabled"}>APPLY</button>`;
+    fxRow.appendChild(actions);
+
+    actions.querySelector(".efx-apply").addEventListener("click", () => applyFxChain(tr));
+    actions.querySelector(".efx-undo").addEventListener("click", () => undoFx(tr));
+  }
+
+  // Globales Popup-Element
+  let fxPopup = null;
+  function ensureFxPopup() {
+    if (fxPopup) return;
+    fxPopup = document.createElement("div");
+    fxPopup.className = "efx-popup";
+    fxPopup.style.display = "none";
+    document.body.appendChild(fxPopup);
+    document.addEventListener("click", (e) => {
+      if (fxPopup && !fxPopup.contains(e.target) && !e.target.closest(".efx-block")) {
+        fxPopup.style.display = "none";
+      }
+    });
+  }
+
+  function openFxPopup(tr, fx, block) {
+    ensureFxPopup();
+    const p = tr.fxParams[fx];
+    let html = `<div class="efx-popup-head"><span>${FX_LABELS[fx]}</span><button class="efx-popup-close">✕</button></div><div class="efx-popup-body">`;
+
+    if (fx === "eq") {
+      html += `<div class="efx-eq-graph-wrap"><canvas class="efx-eq-canvas"></canvas></div>`;
+    } else if (fx === "distortion") {
+      html += `<div class="efx-knob-row">
+        <div class="efx-knob-grp"><label>DRIVE</label><input type="range" min="0" max="100" value="${Math.round(p.drive*100)}" data-param="drive"><span class="efx-val">${Math.round(p.drive*100)}%</span></div>
+      </div>`;
+    } else if (fx === "chorus") {
+      html += `<div class="efx-knob-row">
+        <div class="efx-knob-grp"><label>DEPTH</label><input type="range" min="0" max="100" value="${p.depth}" data-param="depth"><span class="efx-val">${p.depth}%</span></div>
+        <div class="efx-knob-grp"><label>RATE</label><input type="range" min="1" max="50" value="${Math.round(p.rate*10)}" data-param="rate"><span class="efx-val">${p.rate.toFixed(1)} Hz</span></div>
+      </div>`;
+    } else if (fx === "reverb") {
+      html += `<div class="efx-knob-row">
+        <div class="efx-knob-grp"><label>SIZE</label><input type="range" min="0" max="100" value="${Math.round(p.size*100)}" data-param="size"><span class="efx-val">${Math.round(p.size*100)}%</span></div>
+        <div class="efx-knob-grp"><label>WET</label><input type="range" min="0" max="100" value="${Math.round(p.wet*100)}" data-param="wet"><span class="efx-val">${Math.round(p.wet*100)}%</span></div>
+      </div>`;
+    } else if (fx === "gate") {
+      html += `<div class="efx-knob-row">
+        <div class="efx-knob-grp"><label>THRESHOLD</label><input type="range" min="-60" max="0" value="${p.threshold}" data-param="threshold"><span class="efx-val">${p.threshold} dB</span></div>
+      </div>`;
+    }
+
+    html += `</div>`;
+    fxPopup.innerHTML = html;
+
+    // Event-Handler fuer die Regler
+    if (fx === "eq") {
+      const canvas = fxPopup.querySelector(".efx-eq-canvas");
+      const g = canvas.getContext("2d");
+      const bands = tr.fxParams.eq.bands;
+      let ptDrag = -1;
+      const redraw = () => drawEqGraph(canvas, g, bands, ptDrag);
+      const setBand = (i, db) => { bands[i] = Math.max(EQ8MIN, Math.min(EQ8MAX, Math.round(db*2)/2)); redraw(); };
+      canvas.addEventListener("pointerdown", (e) => {
+        const band = eqBandAt(e, canvas, bands); if (band < 0) return;
+        ptDrag = band; canvas.setPointerCapture(e.pointerId);
+        const r = canvas.getBoundingClientRect();
+        setBand(band, eqY2db(e.clientY - r.top, r.height));
+      });
+      canvas.addEventListener("pointermove", (e) => {
+        if (ptDrag < 0) return;
+        const r = canvas.getBoundingClientRect();
+        setBand(ptDrag, eqY2db(e.clientY - r.top, r.height));
+      });
+      const ptEnd = () => { if (ptDrag >= 0) { ptDrag = -1; redraw(); } };
+      canvas.addEventListener("pointerup", ptEnd);
+      canvas.addEventListener("pointercancel", ptEnd);
+      canvas.addEventListener("dblclick", (e) => { const band = eqBandAt(e, canvas, bands); if (band >= 0) setBand(band, 0); });
+      requestAnimationFrame(redraw);
+    } else {
+      fxPopup.querySelectorAll("[data-param]").forEach(inp => {
+        inp.addEventListener("input", () => {
+          const param = inp.dataset.param;
+          const raw = parseInt(inp.value, 10);
+          if (fx === "distortion") {
+            tr.fxParams.distortion.drive = raw / 100;
+            inp.nextElementSibling.textContent = raw + "%";
+          } else if (fx === "chorus") {
+            if (param === "depth") { tr.fxParams.chorus.depth = raw; inp.nextElementSibling.textContent = raw + "%"; }
+            if (param === "rate") { tr.fxParams.chorus.rate = raw / 10; inp.nextElementSibling.textContent = (raw/10).toFixed(1) + " Hz"; }
+          } else if (fx === "reverb") {
+            if (param === "size") { tr.fxParams.reverb.size = raw / 100; inp.nextElementSibling.textContent = raw + "%"; }
+            if (param === "wet") { tr.fxParams.reverb.wet = raw / 100; inp.nextElementSibling.textContent = raw + "%"; }
+          } else if (fx === "gate") {
+            tr.fxParams.gate.threshold = raw; inp.nextElementSibling.textContent = raw + " dB";
+          }
+        });
+      });
+    }
+
+    fxPopup.querySelector(".efx-popup-close").addEventListener("click", () => {
+      fxPopup.style.display = "none";
+    });
+
+    // Position: oberhalb des Blocks
+    const rect = block.getBoundingClientRect();
+    fxPopup.style.display = "block";
+    const pw = fxPopup.offsetWidth;
+    const ph = fxPopup.offsetHeight;
+    let left = rect.left + window.scrollX;
+    let top = rect.top + window.scrollY - ph - 8;
+    if (top < 8) top = rect.bottom + window.scrollY + 8;
+    if (left + pw > window.innerWidth - 8) left = window.innerWidth - pw - 8;
+    fxPopup.style.left = left + "px";
+    fxPopup.style.top = top + "px";
+  }
+
+  function applyFxChain(tr) {
+    if (!tr.buffer || !ac) return;
+    const buf = tr.buffer;
+    tr.fxHistory = buf.getChannelData(0).slice();
+    const freqs = [63, 125, 250, 500, 1000, 2000, 4000, 8000];
+    setStatus("FX // PROCESSING // TRK " + (tr.idx+1));
+    const off = new OfflineAudioContext(buf.numberOfChannels, buf.length, buf.sampleRate);
+    const src = off.createBufferSource();
+    src.buffer = buf;
+    const mk = (type, freq, Q, g) => {
+      const b = off.createBiquadFilter();
+      b.type = type; b.frequency.value = freq; b.Q.value = Q; b.gain.value = g || 0;
+      return b;
+    };
+    let tail = src;
+    for (const fx of tr.fxChain) {
+      const p = tr.fxParams[fx];
+      if (!p.on) continue;
+      if (fx === "eq") {
+        for (let i = 0; i < 8; i++) {
+          const b = mk(i === 0 ? "lowshelf" : i === 7 ? "highshelf" : "peaking", freqs[i], 1.41, p.bands[i]);
+          tail.connect(b); tail = b;
+        }
+      } else if (fx === "distortion") {
+        const wave = off.createWaveShaper();
+        const amount = p.drive * 400;
+        const curve = new Float32Array(256);
+        for (let i = 0; i < 256; i++) {
+          const x = (i * 2) / 256 - 1;
+          curve[i] = ((Math.PI + amount) * x) / (Math.PI + amount * Math.abs(x));
+        }
+        wave.curve = curve; wave.oversample = "4x";
+        tail.connect(wave); tail = wave;
+      } else if (fx === "chorus") {
+        const delay = off.createDelay(0.05);
+        delay.delayTime.value = (p.depth / 1000) * 0.02;
+        const lfo = off.createOscillator();
+        lfo.frequency.value = p.rate;
+        const lfoGain = off.createGain(); lfoGain.gain.value = 0.003;
+        lfo.connect(lfoGain); lfoGain.connect(delay.delayTime); lfo.start(0);
+        const mix = off.createGain(); mix.gain.value = 0.7;
+        tail.connect(delay); delay.connect(mix); tail.connect(mix); tail = mix;
+      } else if (fx === "reverb") {
+        const conv = off.createConvolver();
+        const irLen = Math.floor(buf.sampleRate * (0.5 + p.size * 2.5));
+        const ir = off.createBuffer(1, irLen, buf.sampleRate);
+        const irData = ir.getChannelData(0);
+        for (let i = 0; i < irLen; i++) irData[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / irLen, 2);
+        conv.buffer = ir;
+        const dry = off.createGain(); dry.gain.value = 1 - p.wet;
+        const wet = off.createGain(); wet.gain.value = p.wet;
+        const sum = off.createGain();
+        tail.connect(dry); dry.connect(sum);
+        tail.connect(conv); conv.connect(wet); wet.connect(sum); tail = sum;
+      } else if (fx === "gate") {
+        const gateNode = off.createScriptProcessor(4096, 1, 1);
+        const thresh = Math.pow(10, p.threshold / 20);
+        gateNode.onaudioprocess = (e) => {
+          const inp = e.inputBuffer.getChannelData(0);
+          const out = e.outputBuffer.getChannelData(0);
+          for (let i = 0; i < inp.length; i++) out[i] = Math.abs(inp[i]) > thresh ? inp[i] : 0;
+        };
+        tail.connect(gateNode); tail = gateNode;
+      }
+    }
+    tail.connect(off.destination);
+    src.start(0);
+    off.startRendering().then((rendered) => {
+      const newBuf = ac.createBuffer(rendered.numberOfChannels, rendered.length, rendered.sampleRate);
+      for (let c = 0; c < rendered.numberOfChannels; c++)
+        newBuf.getChannelData(c).set(rendered.getChannelData(c));
+      tr.buffer = newBuf;
+      if (tr.state === "loop") { stopTrackSource(tr); startTrackSourcePhase(tr); }
+      setStatus("FX // APPLIED // TRK " + (tr.idx+1));
+      drawWave(tr); buildFxRow(tr);
+    });
+  }
+
+  function undoFx(tr) {
+    if (!tr.fxHistory || !ac) return;
+    const buf = ac.createBuffer(1, tr.fxHistory.length, ac.sampleRate);
+    buf.getChannelData(0).set(tr.fxHistory);
+    tr.buffer = buf;
+    tr.fxHistory = null;
+    if (tr.state === "loop") {
+      stopTrackSource(tr);
+      startTrackSourcePhase(tr);
+    }
+    setStatus("FX // UNDO // TRK " + (tr.idx+1));
+    drawWave(tr);
+    buildFxRow(tr);
   }
 
   function drawWave(tr) {
@@ -1280,6 +1780,13 @@
     document.getElementById("inGainVal").textContent = pct + "%";
   });
   document.getElementById("calBtn").addEventListener("click", () => runCalibration());
+  document.getElementById("modeBtn").addEventListener("click", () => {
+    sessionMode = !sessionMode;
+    const btn = document.getElementById("modeBtn");
+    btn.textContent = sessionMode ? "SESSION" : "PRECISE";
+    btn.classList.toggle("active", sessionMode);
+    setStatus("MODE // " + (sessionMode ? "SESSION" : "PRECISE"));
+  });
 </script>
 
 </body>
