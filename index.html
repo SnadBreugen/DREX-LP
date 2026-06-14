@@ -547,7 +547,7 @@
     </div>
 
     <div class="foot">
-      <span>DREX-LP 050 &middot; REV 0.51</span>
+      <span>DREX-LP 050 &middot; REV 0.53</span>
       <span>THE SIGNAL CONTINUES</span>
     </div>
   </div>
@@ -590,7 +590,7 @@
       eRow: null, eCanvas: null, eCursor: null,
       fxChain: ["eq", "distortion", "chorus", "reverb", "gate"],
       fxParams: {
-        eq:         { bands: [0,0,0,0,0,0,0,0] },
+        eq:         { bands: [0,0,0,0,0,0,0,0], on: false },
         distortion: { drive: 0.3, on: false },
         chorus:     { depth: 30, rate: 1.5, on: false },
         reverb:     { size: 0.3, wet: 0.3, on: false },
@@ -806,14 +806,22 @@
     const g = ac.createGain();
     g.gain.value = effectiveGain(tr);
     const p = ac.createStereoPanner ? ac.createStereoPanner() : null;
-    if (p) { p.pan.value = tr.pan; src.connect(g); g.connect(p); p.connect(masterGain); }
-    else { src.connect(g); g.connect(masterGain); }
+    if (p) { p.pan.value = tr.pan; connectThroughFx(tr, src, g); g.connect(p); p.connect(masterGain); }
+    else { connectThroughFx(tr, src, g); g.connect(masterGain); }
     const an = ac.createAnalyser(); an.fftSize = 256; g.connect(an); tr.analyser = an;
     src.start(when || ac.currentTime);
     tr.srcNode = src; tr.gainNode = g; tr.panNode = p;
   }
 
   function stopTrackSource(tr) {
+    if (tr.liveFxNodes) {
+      for (const n of tr.liveFxNodes) {
+        if (n.stop) { try { n.stop(); } catch (e) {} }          // Chorus-LFO anhalten
+        if (n.onaudioprocess !== undefined) n.onaudioprocess = null;  // Gate-Callback loesen
+        try { n.disconnect(); } catch (e) {}
+      }
+      tr.liveFxNodes = null; tr.liveFx = null;
+    }
     if (tr.srcNode) { try { tr.srcNode.stop(); } catch (e) {} try { tr.srcNode.disconnect(); } catch (e) {} tr.srcNode = null; }
     if (tr.gainNode) { try { tr.gainNode.disconnect(); } catch (e) {} tr.gainNode = null; }
     if (tr.panNode) { try { tr.panNode.disconnect(); } catch (e) {} tr.panNode = null; }
@@ -1021,8 +1029,8 @@
     const g = ac.createGain();
     g.gain.value = effectiveGain(tr);
     const p = ac.createStereoPanner ? ac.createStereoPanner() : null;
-    if (p) { p.pan.value = tr.pan; src.connect(g); g.connect(p); p.connect(masterGain); }
-    else { src.connect(g); g.connect(masterGain); }
+    if (p) { p.pan.value = tr.pan; connectThroughFx(tr, src, g); g.connect(p); p.connect(masterGain); }
+    else { connectThroughFx(tr, src, g); g.connect(masterGain); }
     const an = ac.createAnalyser(); an.fftSize = 256; g.connect(an); tr.analyser = an;
     // sofort starten, aber mitten im Buffer an der aktuellen Phase
     src.start(ac.currentTime, phase);
@@ -1374,6 +1382,7 @@
         tr.fxParams[fx].on = !tr.fxParams[fx].on;
         block.classList.toggle("on", tr.fxParams[fx].on);
         block.querySelector(".efx-onbtn").textContent = tr.fxParams[fx].on ? "ON" : "OFF";
+        restartTrackLive(tr);                                 // FX rein/raus aus der Live-Kette
       });
 
       // Klick auf Block (nicht auf ON/OFF) oeffnet Popup
@@ -1404,6 +1413,7 @@
         chain.splice(fromIdx, 1);
         chain.splice(toIdx, 0, draggedFx);
         buildFxRow(tr);  // neu aufbauen mit neuer Reihenfolge
+        restartTrackLive(tr);                                 // neue Reihenfolge in die Live-Kette
       });
     }
 
@@ -1471,7 +1481,18 @@
       const bands = tr.fxParams.eq.bands;
       let ptDrag = -1;
       const redraw = () => drawEqGraph(canvas, g, bands, ptDrag);
-      const setBand = (i, db) => { bands[i] = Math.max(EQ8MIN, Math.min(EQ8MAX, Math.round(db*2)/2)); redraw(); };
+      const setBand = (i, db) => {
+        bands[i] = Math.max(EQ8MIN, Math.min(EQ8MAX, Math.round(db*2)/2));
+        if (!p.on) {                                          // erste Verstellung aktiviert den EQ-Block
+          p.on = true;
+          block.classList.add("on");
+          const onb = block.querySelector(".efx-onbtn"); if (onb) onb.textContent = "ON";
+          restartTrackLive(tr);                               // EQ in die laufende Live-Kette aufnehmen
+        } else {
+          updateLiveFx(tr);                                   // Baender live nachziehen (kein Neustart)
+        }
+        redraw();
+      };
       canvas.addEventListener("pointerdown", (e) => {
         const band = eqBandAt(e, canvas, bands); if (band < 0) return;
         ptDrag = band; canvas.setPointerCapture(e.pointerId);
@@ -1505,6 +1526,7 @@
           } else if (fx === "gate") {
             tr.fxParams.gate.threshold = raw; inp.nextElementSibling.textContent = raw + " dB";
           }
+          updateLiveFx(tr);                                   // Live-Vorhoeren: Parameter sofort nachziehen
         });
       });
     }
@@ -1524,6 +1546,108 @@
     if (left + pw > window.innerWidth - 8) left = window.innerWidth - pw - 8;
     fxPopup.style.left = left + "px";
     fxPopup.style.top = top + "px";
+  }
+
+  // ---------- Live-FX: Effektkette im laufenden Loop-Pfad (Vorhoeren) ----------
+  // Identische DSP wie applyFxChain, nur als persistente Live-Nodes. Parameter
+  // werden beim Ziehen live nachgezogen (kein Neustart); ON/OFF und Reihenfolge
+  // bauen die Kette per startTrackSourcePhase neu auf.
+  function makeDistCurve(drive) {
+    const amount = drive * 400;
+    const curve = new Float32Array(256);
+    for (let i = 0; i < 256; i++) {
+      const x = (i * 2) / 256 - 1;
+      curve[i] = ((Math.PI + amount) * x) / (Math.PI + amount * Math.abs(x));
+    }
+    return curve;
+  }
+  function makeReverbIR(size) {
+    const irLen = Math.floor(ac.sampleRate * (0.5 + size * 2.5));
+    const ir = ac.createBuffer(1, irLen, ac.sampleRate);
+    const d = ir.getChannelData(0);
+    for (let i = 0; i < irLen; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / irLen, 2);
+    return ir;
+  }
+  // Baut die aktive FX-Kette zwischen src und g, speichert Refs in tr.liveFx und
+  // eine flache Node-Liste in tr.liveFxNodes (fuer sauberes Abraeumen).
+  function connectThroughFx(tr, src, g) {
+    tr.liveFx = { eq: null, distortion: null, chorus: null, reverb: null, gate: null };
+    tr.liveFxNodes = [];
+    const reg = (n) => { tr.liveFxNodes.push(n); return n; };
+    let tail = src;
+    for (const fx of tr.fxChain) {
+      const p = tr.fxParams[fx];
+      if (!p.on) continue;
+      if (fx === "eq") {
+        const bank = [];
+        for (let i = 0; i < 8; i++) {
+          const b = reg(ac.createBiquadFilter());
+          b.type = i === 0 ? "lowshelf" : i === 7 ? "highshelf" : "peaking";
+          b.frequency.value = EQ8F[i]; b.Q.value = 1.41; b.gain.value = p.bands[i];
+          tail.connect(b); tail = b; bank.push(b);
+        }
+        tr.liveFx.eq = bank;
+      } else if (fx === "distortion") {
+        const wave = reg(ac.createWaveShaper());
+        wave.curve = makeDistCurve(p.drive); wave.oversample = "4x";
+        tail.connect(wave); tail = wave; tr.liveFx.distortion = wave;
+      } else if (fx === "chorus") {
+        const delay = reg(ac.createDelay(0.05));
+        delay.delayTime.value = (p.depth / 1000) * 0.02;
+        const lfo = reg(ac.createOscillator()); lfo.frequency.value = p.rate;
+        const lfoGain = reg(ac.createGain()); lfoGain.gain.value = 0.003;
+        lfo.connect(lfoGain); lfoGain.connect(delay.delayTime); lfo.start(0);
+        const mix = reg(ac.createGain()); mix.gain.value = 0.7;
+        tail.connect(delay); delay.connect(mix); tail.connect(mix); tail = mix;
+        tr.liveFx.chorus = { delay, lfo, lfoGain, mix };
+      } else if (fx === "reverb") {
+        const conv = reg(ac.createConvolver()); conv.buffer = makeReverbIR(p.size);
+        const dry = reg(ac.createGain()); dry.gain.value = 1 - p.wet;
+        const wet = reg(ac.createGain()); wet.gain.value = p.wet;
+        const sum = reg(ac.createGain());
+        tail.connect(dry); dry.connect(sum);
+        tail.connect(conv); conv.connect(wet); wet.connect(sum); tail = sum;
+        tr.liveFx.reverb = { conv, dry, wet, sum, size: p.size };
+      } else if (fx === "gate") {
+        const gateNode = reg(ac.createScriptProcessor(4096, 1, 1));
+        gateNode._thresh = Math.pow(10, p.threshold / 20);
+        gateNode.onaudioprocess = (e) => {
+          const inp = e.inputBuffer.getChannelData(0), out = e.outputBuffer.getChannelData(0);
+          const t = gateNode._thresh;
+          for (let i = 0; i < inp.length; i++) out[i] = Math.abs(inp[i]) > t ? inp[i] : 0;
+        };
+        tail.connect(gateNode); tail = gateNode; tr.liveFx.gate = gateNode;
+      }
+    }
+    tail.connect(g);
+  }
+  // Live-Parameter ohne Neustart nachziehen (fuers fluessige Ziehen)
+  function updateLiveFx(tr) {
+    const lf = tr.liveFx; if (!lf) return;
+    if (lf.eq) for (let i = 0; i < 8; i++) lf.eq[i].gain.value = tr.fxParams.eq.bands[i];
+    if (lf.distortion) lf.distortion.curve = makeDistCurve(tr.fxParams.distortion.drive);
+    if (lf.chorus) {
+      lf.chorus.delay.delayTime.value = (tr.fxParams.chorus.depth / 1000) * 0.02;
+      lf.chorus.lfo.frequency.value = tr.fxParams.chorus.rate;
+    }
+    if (lf.reverb) {
+      lf.reverb.dry.gain.value = 1 - tr.fxParams.reverb.wet;
+      lf.reverb.wet.gain.value = tr.fxParams.reverb.wet;
+      if (lf.reverb.size !== tr.fxParams.reverb.size) {   // IR-Groesse braucht neue Impulsantwort
+        lf.reverb.conv.buffer = makeReverbIR(tr.fxParams.reverb.size);
+        lf.reverb.size = tr.fxParams.reverb.size;
+      }
+    }
+    if (lf.gate) lf.gate._thresh = Math.pow(10, tr.fxParams.gate.threshold / 20);
+  }
+  // Kette neu aufbauen (ON/OFF, Reihenfolge): nur wenn die Spur gerade laeuft
+  function restartTrackLive(tr) {
+    if (tr.state === "loop" && tr.srcNode) startTrackSourcePhase(tr);
+  }
+  // Nach APPLY: Effekt steckt im Material, also Live-Kette wieder neutral, sonst Doppel-Anwendung.
+  function neutralizeFx(tr) {
+    tr.fxParams.eq.bands = [0,0,0,0,0,0,0,0];   // EQ hat auto-on beim Ziehen: Werte muessen neutral
+    for (const fx of tr.fxChain) tr.fxParams[fx].on = false;
   }
 
   function applyFxChain(tr) {
@@ -1598,6 +1722,7 @@
       for (let c = 0; c < rendered.numberOfChannels; c++)
         newBuf.getChannelData(c).set(rendered.getChannelData(c));
       tr.buffer = newBuf;
+      neutralizeFx(tr);                                       // Effekt ist eingebrannt: Live-Kette neutralisieren
       if (tr.state === "loop") { stopTrackSource(tr); startTrackSourcePhase(tr); }
       setStatus("FX // APPLIED // TRK " + (tr.idx+1));
       drawWave(tr); buildFxRow(tr);
